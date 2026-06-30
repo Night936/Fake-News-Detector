@@ -8,8 +8,8 @@ import os
 
 #Paths for OneDrive to gather data
 #DRIVE_ROOT = os.getenv("DRIVE_ROOT") 
-DRIVE_ROOT = "/content/drive/MyDrive" #Base OneDrive directory
-MINI_DATASET = "/content/drive/MyDrive/Mini_Dataset"
+DRIVE_ROOT = "/content/drive/MyDrive/Eduardo - Fake News Project - MITACS 2026/Code" #Base OneDrive directory
+MINI_DATASET = "/content/drive/MyDrive/Eduardo - Fake News Project - MITACS 2026/Code/Mini_Dataset"
 #MINI_DATASET = os.getenv("MINI_DATASET")
 
 #Metadata tsv files for training, testing and validating
