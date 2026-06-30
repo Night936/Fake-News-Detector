@@ -4,9 +4,9 @@ import os
 import sys
 import time 
 from openai import OpenAI
-import config
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 
 PREDICTED_VALS = {"real", "fake", "other"}
 
