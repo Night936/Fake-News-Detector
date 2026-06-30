@@ -58,7 +58,7 @@ def makeRequest(client , prompt, content):
                 messages = [
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": userMessage},
-                ]
+                ],
                 temperature = 0.2,
                 max_tokens = 200,
             )
