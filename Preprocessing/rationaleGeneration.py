@@ -50,8 +50,9 @@ def getClient():
 
 #Recieves the error message from the API request and gets how long it should wait before trying once more using REGEX
 def getTimeFromError(errorMessage: str):
-    match = re.search(r"try again in \s+(?:(\d+)m)?(\d+(?:\.\d+)?)s", errorMessage)
+    match = re.search(r"try again in\s+(?:(\d+)m)?(\d+(?:\.\d+)?)s", errorMessage)
     if not match:
+        print("couldnt read the waiting time, returning None")
         return None
     minutes = int(match.group(1)) if match.group(1) else 0
     seconds = float(match.group(2))
@@ -191,8 +192,8 @@ def processSplit(splitName, jsonPath):
 def main():
     os.makedirs(config.RATIONALES, exist_ok=True)
     processSplit("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
-    processSplit("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
-    processSplit("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
+    #processSplit("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
+    #processSplit("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
     print("\nStep 2 complete. You can now run textTraining.py")
  
 if __name__ == "__main__":
