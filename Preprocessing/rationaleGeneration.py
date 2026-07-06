@@ -50,7 +50,7 @@ def getClient():
 
 #Recieves the error message from the API request and gets how long it should wait before trying once more using REGEX
 def getTimeFromError(errorMessage: str):
-    match = re.search("try again in \s+(?:(\d+)m)?(\d+(?:\.\d+)?)s", errorMessage)
+    match = re.search(r"try again in \s+(?:(\d+)m)?(\d+(?:\.\d+)?)s", errorMessage)
     if not match:
         return None
     minutes = int(match.group(1)) if match.group(1) else 0
@@ -99,7 +99,7 @@ def makeRequest(client, content):
             if waitTime is None: #if it couldnt be determined we wait 60 seconds
                 waitTime = 60.0
             waitTime += 2.0 
-            print(f" [rate limited] sleeping {waitTime:.1f}s before retry...")
+            print(f"[rate limited] sleeping {waitTime:.1f}s before retry...")
             time.sleep(waitTime)
             lastError = e
             continue
@@ -112,7 +112,7 @@ def makeRequest(client, content):
     print(f"LLM call failed after {lastError}; using other")
     return FAILED_RATIONALE_MESSAGE, "other", FAILED_RATIONALE_MESSAGE, "other"
 
-
+#Ensures that the output path exists and returns the exact path to be used by other functions
 def checkOutput(splitName):
     return os.path.join(config.RATIONALES, f"{splitName}_checkpoint.jsonl")
 
@@ -126,8 +126,8 @@ def isBadRow(rec):
         and str(rec.get("cs_rationale", "")).startswith(FAILED_RATIONALE_MESSAGE)
     )
  
-#Ensures that the output path exists and that it can be written into
-def loadOutputPath(splitName):
+#Function that reads line by line of the written split file and if its done it adds it to its respective dictionary 
+def loadProgress(splitName):
     done = {}
     path = checkOutput(splitName)
     if os.path.exists(path):
@@ -137,6 +137,8 @@ def loadOutputPath(splitName):
                 if not line:
                     continue
                 rec = json.loads(line)
+                if isBadRow(rec):
+                    continue
                 done[rec["source_id"]] = rec
     return done
  
@@ -145,9 +147,9 @@ def loadOutputPath(splitName):
 def processSplit(splitName, jsonPath):
     print(f"\n=== {splitName} ===")
     with open(jsonPath, "r", encoding="utf-8") as f:
-        records = json.load(f)
+        records = json.load(f) #loads every record from the path
  
-    done = loadOutputPath(splitName)
+    done = loadProgress(splitName)
     print(f"{len(records)} total rows, {len(done)} already done (resuming)")
  
     client = getClient()
