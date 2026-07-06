@@ -2,8 +2,9 @@
 import json
 import os
 import sys
+import re
 import time 
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 
 #Allows this file to go 2 directories above to get the config file
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -11,31 +12,30 @@ import config
 
 PREDICTED_VALS = {"real", "fake", "other"}
 
-#This prompt tells the LLM to analyze the post based on how its written, worded and presented
-TEXTUAL_PROMPT = (
-    "You are an expert at analyzing the writing style and presentation of social "
-    "media posts to judge whether they describe real or fabricated/misleading "
-    "content. Focus ONLY on textual clues: wording, tone, sensationalism, "
-    "exaggeration, vagueness, clickbait patterns, internal inconsistency. "
-    "Do not use outside world knowledge to judge truthfulness -- judge purely "
-    "from how the text is written."
-)
+FAILED_RATIONALE_MESSAGE = "Could not determine from available information"
 
-#This prompt tells the LLM to check for the veracity of the content, can it actually happen?
-#based on commonsense
-CONTENT_PROMPT = (
-    "You are an expert fact-checker who judges social media post titles using "
-    "general world/commonsense knowledge: is the claimed event plausible? Does "
-    "it contradict well-known facts? Could this realistically happen? Focus on "
-    "real-world plausibility rather than writing style."
-)
-
-#User message template that can be used with any content
-MESSAGE_TEMPLATE = (
-    'Post title: "{content}"\n\n'
+#This prompt tells the LLM to analyze the post based on how its written, worded and presented.
+#Moveover, it also asks it to check for the veracity of the content using common sense, can this actually happen?
+#Finally, it tells it exactly how to respond, can this actually (one single JSON object that we can interpret with both angles)
+LLM_PROMPT = (
+    "You are analyzing a social media post title from two independent angles. "
+    "Give a separate, independent verdict for each -- do not let one angle's "
+    "conclusion bias the other.\n\n"
+    "ANGLE A (textual/stylistic): Judge ONLY the writing itself -- wording, tone, "
+    "sensationalism, exaggeration, vagueness, clickbait patterns, internal "
+    "inconsistency. Do NOT use outside world knowledge here.\n\n"
+    "ANGLE B (commonsense/plausibility): Judge using general world knowledge -- "
+    "is the claimed event plausible? Does it contradict well-known facts? Could "
+    "this realistically happen? Ignore writing style here, focus only on "
+    "real-world plausibility.\n\n"
     "Respond with ONLY a JSON object, no markdown fences, no extra text:\n"
-    '{{"rationale": "<2-3 sentence rationale>", "prediction": "real" | "fake" | "other"}}'
+    '{"td_rationale": "<2-3 sentence rationale for Angle A>", '
+    '"td_prediction": "real"|"fake"|"other", '
+    '"cs_rationale": "<2-3 sentence rationale for Angle B>", '
+    '"cs_prediction": "real"|"fake"|"other"}'
 )
+
+MESSAGE_TEMPLATE = 'Post title: "{content}"'
 
 #Gets a client to make the request to the model via the API key
 def getClient():
@@ -48,7 +48,18 @@ def getClient():
         )
     return OpenAI(api_key=api_key, base_url=config.GROQ_BASE_URL)
 
-def makeRequest(client , prompt, content):
+#Recieves the error message from the API request and gets how long it should wait before trying once more using REGEX
+def getTimeFromError(errorMessage: str):
+    match = re.search("try again in \s+(?:(\d+)m)?(\d+(?:\.\d+)?)s", errorMessage)
+    if not match:
+        return None
+    minutes = int(match.group(1)) if match.group(1) else 0
+    seconds = float(match.group(2))
+    return minutes * 60 + seconds
+
+#Function to make a single request via the LLM's API, it returns the json given and, in case of failure, it writes "other" for
+#that particular rationale
+def makeRequest(client, content):
     userMessage = MESSAGE_TEMPLATE.format(content=content.replace('"', "'")[:500])
     lastError = None
 
@@ -57,37 +68,68 @@ def makeRequest(client , prompt, content):
             response = client.chat.completions.create(
                 model = config.GROQ_MODEL,
                 messages = [
-                    {"role": "system", "content": prompt},
+                    {"role": "system", "content": LLM_PROMPT},
                     {"role": "user", "content": userMessage},
                 ],
                 temperature = 0.2,
-                max_tokens = 200,
+                max_tokens = 260,
             )
             raw = response.choices[0].message.content.strip()
             raw = raw.strip("`")
             if raw.lower().startswith("json"):
                 raw = raw[4:].strip()
             parsed = json.loads(raw)
-            pred = str(parsed.get("prediction", "other")).strip().lower()
-            if pred not in PREDICTED_VALS:
-                pred = "other"
-            rationale = str(parsed.get("rationale", "")).strip()
-            if not rationale:
-                rationale = "No rationale provided."
-            return rationale, pred
+
+            tdPred = str(parsed.get("td_prediction", "other")).strip().lower()
+            if tdPred not in PREDICTED_VALS:
+                tdPred = "other"
+
+            csPred = str(parsed.get("cs_prediction", "other")).strip().lower()
+            if csPred not in PREDICTED_VALS:
+                csPred = "other"    
+            
+            tdRationale = str(parsed.get("td_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
+            csRationale = str(parsed.get("cs_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
+
+            return tdRationale, tdPred, csRationale, csPred
+        except RateLimitError as e:
+            #If it gets a Rate Limit Error that usually means that we used up all of the available tokens, the message oftentimes
+            #includes how long we have to wait, so we parse the error to get the specific delimited time via the built function
+            waitTime = getTimeFromError(str(e))
+            if waitTime is None: #if it couldnt be determined we wait 60 seconds
+                waitTime = 60.0
+            waitTime += 2.0 
+            print(f" [rate limited] sleeping {waitTime:.1f}s before retry...")
+            time.sleep(waitTime)
+            lastError = e
+            continue
+ 
         except Exception as e:
             lastError = e
+            attempt += 1
             time.sleep(1.0 + attempt)
+ 
     print(f"LLM call failed after {lastError}; using other")
-    return "Could not determine from available information", "other"
+    return FAILED_RATIONALE_MESSAGE, "other", FAILED_RATIONALE_MESSAGE, "other"
 
-def _checkpoint_path(split_name):
-    return os.path.join(config.RATIONALES, f"{split_name}_checkpoint.jsonl")
+
+def checkOutput(splitName):
+    return os.path.join(config.RATIONALES, f"{splitName}_checkpoint.jsonl")
+
+#Checks if an already written row in the rationales file has the other label, which indicates that the process could not be 
+#completed appropiately in the first try, to then try again with that particular record (rec)
+def isBadRow(rec):
+    return(
+        rec.get("td_pred") == "other"
+        and rec.get("cs_pred") == "other"
+        and str(rec.get("td_rationale", "")).startswith(FAILED_RATIONALE_MESSAGE)
+        and str(rec.get("cs_rationale", "")).startswith(FAILED_RATIONALE_MESSAGE)
+    )
  
- 
-def _load_checkpoint(split_name):
+#Ensures that the output path exists and that it can be written into
+def loadOutputPath(splitName):
     done = {}
-    path = _checkpoint_path(split_name)
+    path = checkOutput(splitName)
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
@@ -98,59 +140,58 @@ def _load_checkpoint(split_name):
                 done[rec["source_id"]] = rec
     return done
  
- 
-def process_split(split_name, pre_json_path):
-    print(f"\n=== {split_name} ===")
-    with open(pre_json_path, "r", encoding="utf-8") as f:
+#Main function that gets the rationales with their respective dataset depending on which split we are talking about 
+#(train, test, validate)
+def processSplit(splitName, jsonPath):
+    print(f"\n=== {splitName} ===")
+    with open(jsonPath, "r", encoding="utf-8") as f:
         records = json.load(f)
  
-    done = _load_checkpoint(split_name)
-    print(f"  {len(records)} total rows, {len(done)} already done (resuming)")
+    done = loadOutputPath(splitName)
+    print(f"{len(records)} total rows, {len(done)} already done (resuming)")
  
     client = getClient()
-    ckpt_path = _checkpoint_path(split_name)
-    ckpt_file = open(ckpt_path, "a", encoding="utf-8")
+    ckptPath = checkOutput(splitName)
+    ckptFile = open(ckptPath, "a", encoding="utf-8")
  
     for i, rec in enumerate(records):
         if rec["source_id"] in done:
             continue
  
-        td_rationale, td_pred = makeRequest(client , TEXTUAL_PROMPT, rec["content"])
+        tdRationale, tdPred, csRationale, csPred = makeRequest(client, rec["content"])
         time.sleep(config.RATIONALE_SLEEP_BETWEEN_CALLS)
-        cs_rationale, cs_pred = makeRequest(client , CONTENT_PROMPT, rec["content"])
-        time.sleep(config.RATIONALE_SLEEP_BETWEEN_CALLS)
+
  
-        rec_out = dict(rec)
-        rec_out["td_rationale"] = td_rationale
-        rec_out["td_pred"] = td_pred
-        rec_out["td_acc"] = int(td_pred == rec["label"])
-        rec_out["cs_rationale"] = cs_rationale
-        rec_out["cs_pred"] = cs_pred
-        rec_out["cs_acc"] = int(cs_pred == rec["label"])
+        recOut = dict(rec)
+        recOut["td_rationale"] = tdRationale
+        recOut["td_pred"] = tdPred
+        recOut["td_acc"] = int(tdPred == rec["label"])
+        recOut["cs_rationale"] = csRationale
+        recOut["cs_pred"] = csPred
+        recOut["cs_acc"] = int(csPred == rec["label"])
  
-        ckpt_file.write(json.dumps(rec_out, ensure_ascii=False) + "\n")
-        ckpt_file.flush()
-        done[rec["source_id"]] = rec_out
+        ckptFile.write(json.dumps(recOut, ensure_ascii=False) + "\n")
+        ckptFile.flush()
+        done[rec["source_id"]] = recOut
  
         if (i + 1) % 50 == 0:
-            print(f"  {i + 1}/{len(records)} done")
+            print(f"{i + 1}/{len(records)} done")
  
-    ckpt_file.close()
+    ckptFile.close()
  
-    final_records = [done[r["source_id"]] for r in records]
-    out_path = os.path.join(config.RATIONALES, f"{'val' if split_name == 'validate' else split_name}.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(final_records, f, ensure_ascii=False, indent=2)
-    print(f"  wrote {out_path}")
+    finalRecords = [done[r["source_id"]] for r in records]
+    outPath = os.path.join(config.RATIONALES, f"{'val' if splitName == 'validate' else splitName}.json")
+    with open(outPath, "w", encoding="utf-8") as f:
+        json.dump(finalRecords, f, ensure_ascii=False, indent=2)
+    print(f"wrote {outPath}")
  
  
 def main():
     os.makedirs(config.RATIONALES, exist_ok=True)
-    process_split("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
-    process_split("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
-    process_split("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
-    print("\nStep 2 complete. You can now run train_text_branch.py")
- 
+    processSplit("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
+    processSplit("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
+    processSplit("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
+    print("\nStep 2 complete. You can now run textTraining.py")
  
 if __name__ == "__main__":
     main()
