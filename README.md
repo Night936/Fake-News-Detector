@@ -29,7 +29,7 @@ This is done depending if its a working or main sub branch from main.
 
 If its a sub branch coming straight from main, you use:
 ```bash
-git checkout main
+git checkout <BranchName>
 git fetch origin
 git merge origin/main
 git push
