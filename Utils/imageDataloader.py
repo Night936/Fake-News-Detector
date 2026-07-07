@@ -2,11 +2,13 @@
 import json
 import os
 import torch
+import sys
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
 from transformers import BertTokenizer 
 
-from utils.imagePreProcessing import (
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from Preprocessing.imagePreprocessing import (
     getFrequencyTransform,
     getSpatialTransform,
     getDFT,
