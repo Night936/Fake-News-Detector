@@ -189,7 +189,7 @@ def processSplit(splitName, jsonPath):
     print(f"wrote {outPath}")
  
 def processSplitTemp(splitName, jsonPath):
-    print("f\n==={splitName}===")
+    print(f"\n==={splitName}===")
     #Load only the progress up until this point
     done = loadProgress(splitName)
     print(f"skipping LLM calls for now and using {len(done)}")

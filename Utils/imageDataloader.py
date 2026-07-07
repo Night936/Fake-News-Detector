@@ -39,10 +39,11 @@ class FakedditImageDataset(Dataset):
                     self.records.append(rec)
                 else:
                     nMissing += 1
-                print(f"[IMAGES]: {len(self.records)} usable rows\n {nMissing} skipped bc that image doesnt exist bro")
         else:
             self.records = raw
-            print(f"[IMAGES]: {len(self.records)} usable rows)")
+        
+        print(f"[IMAGES]: {len(self.records)} usable rows)\n")
+        print(f"[IMAGES]: {nMissing} skipped bc that image doesnt exist bro")
 
     #Function to get the amount of usable records
     def getUsableRecords(self):
@@ -77,11 +78,11 @@ def getImageDataloader(jsonPath, imageDir, batchSize, shuffle, train=True):
 
     return DataLoader(
         dataset,
-        batchSize = batchSize,
+        batch_size = batchSize,
         shuffle = shuffle,
-        numWorkers = 2,
-        pinMemory = True,
-        dropLast = train,
+        num_workers = 2,
+        pin_memory = True,
+        drop_last = train,
     ) 
 
 class FakedditMultimodalDataset(Dataset):
