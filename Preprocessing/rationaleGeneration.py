@@ -188,10 +188,23 @@ def processSplit(splitName, jsonPath):
         json.dump(finalRecords, f, ensure_ascii=False, indent=2)
     print(f"wrote {outPath}")
  
- 
+def processSplitTemp(splitName, jsonPath):
+    print("f\n==={splitName}===")
+    #Load only the progress up until this point
+    done = loadProgress(splitName)
+    print(f"skipping LLM calls for now and using {len(done)}")
+    #we put the done values inside a list to then put them in the final json
+    finalRecords = list(done.values())
+    
+    outPath = os.path.join(config.RATIONALES, f"{'val' if splitName == 'validate' else splitName}.json")
+    with open(outPath, "w", encoding="utf-8") as f:
+        json.dump(finalRecords, f, ensure_ascii=False, indent=2)
+    print(f"Wrote {len(finalRecords)} inside {outPath}")
+
+
 def main():
     os.makedirs(config.RATIONALES, exist_ok=True)
-    processSplit("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
+    processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
     #processSplit("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
     #processSplit("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
     print("\nStep 2 complete. You can now run textTraining.py")
