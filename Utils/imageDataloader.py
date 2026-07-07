@@ -46,7 +46,7 @@ class FakedditImageDataset(Dataset):
         print(f"[IMAGES]: {nMissing} skipped bc that image doesnt exist bro")
 
     #Function to get the amount of usable records
-    def getUsableRecords(self):
+    def __len__(self):
         return len(self.records)
         
     def loadImageTensors(self, fakedditId):
