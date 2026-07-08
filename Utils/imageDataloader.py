@@ -63,7 +63,7 @@ class FakedditImageDataset(Dataset):
                 torch.tensor(0.0)
             )
             
-    def getItem(self, idx):
+    def __getitem__(self, idx):
         rec = self.records[idx]
         imgSpatial, imgFrequency, hasImage = self.loadImageTensors(rec["fakeddit_id"])
         label = LABELS[rec["label"]]
