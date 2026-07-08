@@ -71,7 +71,7 @@ class FakedditImageDataset(Dataset):
 
         return(imgSpatial, imgFrequency, hasImage,
                 torch.tensor(label, dtype=torch.long),
-                torch.tensor(sourceId, dtype=torch.long))
+                sourceId)
         
 def getImageDataloader(jsonPath, imageDir, batchSize, shuffle, train=True):
     dataset = FakedditImageDataset(jsonPath, imageDir, train=train, requireImage=True)
@@ -162,13 +162,13 @@ class FakedditMultimodalDataset(Dataset):
             "FTR_3":          ftr3,
             "FTR_3_masks":    ftr3_masks,
             "FTR_3_pred":     torch.tensor(PREDICTED_VALS[rec["cs_pred"]], dtype=torch.long),
-            "FTR_3_acc":      torch.tensor(rec["cs_acc"],         dtype=torch.long),
+            "FTR_3_acc":      torch.tensor(rec["cs_acc"], dtype=torch.long),
             "extra_features": extra,
             "img_spatial":    img_spatial,
             "img_freq":       img_freq,
             "has_image":      has_image,
             "label":          torch.tensor(LABELS[rec["label"]], dtype=torch.long),
-            "source_id":      torch.tensor(rec["source_id"],     dtype=torch.long),
+            "source_id":      torch.tensor(rec["source_id"], dtype=torch.long),
         }
  
  
