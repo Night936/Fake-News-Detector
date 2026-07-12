@@ -3,14 +3,11 @@ Extension of the original models/arg.py ARGModel.
 
 The only structural change: a small MLP projects the 12-dim VADER+lexical
 feature vector into a 64-dim embedding, which gets concatenated onto the
-BERT+rationale `final_feature` right before the classification head. This
+BERT+rationale final_feature right before the classification head. This
 keeps the entire rationale-fusion mechanism (MaskAttention aggregator,
 co-attention, cross-attention, gating) exactly as ARG's authors designed
 it -- we're only widening the final decision layer's input, not touching
 how text and rationales talk to each other.
-
-Everything else is copied verbatim from models/arg.py so this stays easy
-to diff against the original if you update from upstream ARG later.
 """
 
 import os

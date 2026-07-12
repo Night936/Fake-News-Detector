@@ -33,13 +33,16 @@ def deriveLabel(row):
             f"Available columns: {list(row.index)}"
         )
     
+#Reads the entire TSV and generates personalized ids for every record inside the original fakeddit
+#in order to not deal with the whole messy alphanumeric string it uses, receives a startId in case 
+#it is restarting an older process
 def convertSplit(tsvPath, splitName, startId):
     print(f"Reading the tsv inside {tsvPath}")
     df = pd.read_csv(tsvPath, sep="\t")
     print(f"Found {len(df)} rows and {list(df.columns)} columns")
 
     records = []
-    nextId = startId
+    nextId = startId 
     skipped = 0
 
     for _, row in df.iterrows():
@@ -70,6 +73,8 @@ def convertSplit(tsvPath, splitName, startId):
     print(f"  -> {len(records)} usable rows ({skipped} skipped: empty text)")
     return records, nextId
 
+#For every split to be done it grabs the text inside its according tsv, gets its label and builds
+#a record with a propietary source id to not use the fakeddit ones
 def main():
     os.makedirs(config.ARG_OUTPUT, exist_ok=True)
  
@@ -81,15 +86,14 @@ def main():
     ]:
         records, next_id = convertSplit(tsv_path, split_name, next_id)
  
-        # quick label balance sanity check
         n_fake = sum(1 for r in records if r["label"] == "fake")
         n_real = len(records) - n_fake
-        print(f"  label balance ({split_name}): real={n_real}, fake={n_fake}")
+        print(f"label balance ({split_name}): real={n_real}, fake={n_fake}")
  
         out_path = os.path.join(config.ARG_OUTPUT, out_name)
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
-        print(f"  wrote {out_path}\n")
+        print(f"wrote {out_path}\n")
  
     print("Step 1 complete. Next: run preprocessing/generate_rationales.py")
  

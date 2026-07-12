@@ -1,3 +1,6 @@
+"""
+original ARG layers file, which defines the reusable neural network building blocks the model is made of
+"""
 import numpy as np
 import torch
 import torch.nn as nn
