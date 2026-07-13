@@ -116,7 +116,7 @@ class FakedditMultimodalDataset(Dataset):
  
     def _tokenize(self, text):
         ids = self.tokenizer.encode(
-            text, max_length=self.max_len,
+            text, max_length=self.maxLen,
             add_special_tokens=True, padding="max_length", truncation=True,
         )
         ids    = torch.tensor(ids)
@@ -124,7 +124,7 @@ class FakedditMultimodalDataset(Dataset):
         return ids, masks
  
     def _load_image_tensors(self, fakeddit_id):
-        path = os.path.join(self.image_dir, fakeddit_id + ".jpg")
+        path = os.path.join(self.imageDir, fakeddit_id + ".jpg")
         try:
             img         = Image.open(path).convert("RGB")
             img_spatial = self.spatialTransform(img)
