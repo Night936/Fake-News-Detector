@@ -36,7 +36,7 @@ def deriveLabel(row):
 #Reads the entire TSV and generates personalized ids for every record inside the original fakeddit
 #in order to not deal with the whole messy alphanumeric string it uses, receives a startId in case 
 #it is restarting an older process
-def convertSplit(tsvPath, splitName, startId):
+def convertSplit(tsvPath, splitName, startId, idMap):
     print(f"Reading the tsv inside {tsvPath}")
     df = pd.read_csv(tsvPath, sep="\t")
     print(f"Found {len(df)} rows and {list(df.columns)} columns")
@@ -51,6 +51,7 @@ def convertSplit(tsvPath, splitName, startId):
             skipped += 1
             continue
  
+        fakedditId = str(row.get("id", ""))
         try:
             label = deriveLabel(row)
         except ValueError as e:
@@ -58,7 +59,7 @@ def convertSplit(tsvPath, splitName, startId):
  
         record = {
             "source_id": nextId,
-            "fakeddit_id": str(row.get("id", "")),
+            "fakeddit_id": fakedditId,
             "content": text,
             "label": label,
             "time": int(row["created_utc"]) if "created_utc" in row and pd.notna(row["created_utc"]) else -1,
@@ -68,6 +69,7 @@ def convertSplit(tsvPath, splitName, startId):
             "image_url": str(row.get("image_url", "")),
         }
         records.append(record)
+        idMap[fakedditId] = nextId
         nextId += 1
  
     print(f"  -> {len(records)} usable rows ({skipped} skipped: empty text)")
@@ -78,13 +80,16 @@ def convertSplit(tsvPath, splitName, startId):
 def main():
     os.makedirs(config.ARG_OUTPUT, exist_ok=True)
  
+    #the id map allows the images to grab the specific id assigned here via the use of a shared json file
+    #written in the output directory
+    idMap = {}
     next_id = 0
     for split_name, tsv_path, out_name in [
         ("train", config.TRAIN_TSV, "train_pre.json"),
         ("validate", config.VALIDATE_TSV, "val_pre.json"),
         ("test", config.TEST_TSV, "test_pre.json"),
     ]:
-        records, next_id = convertSplit(tsv_path, split_name, next_id)
+        records, next_id = convertSplit(tsv_path, split_name, next_id, idMap)
  
         n_fake = sum(1 for r in records if r["label"] == "fake")
         n_real = len(records) - n_fake
@@ -95,6 +100,12 @@ def main():
             json.dump(records, f, ensure_ascii=False, indent=2)
         print(f"wrote {out_path}\n")
  
+        
+        idMapPath = os.path.join(config.ARG_OUTPUT, "source_id_map.json")
+        with open(idMapPath, "w", encoding="utf-8") as f:
+            json.dump({"next_id": next_id, "map": idMap}, f, ensure_ascii=False, indent=2)
+        print(f"wrote {idMapPath} ({len(idMap)} ids)")
+
     print("Step 1 complete. Next: run preprocessing/generate_rationales.py")
  
  
