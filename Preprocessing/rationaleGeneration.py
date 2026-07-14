@@ -189,7 +189,7 @@ def processSplit(splitName, jsonPath):
     print(f"wrote {outPath}")
  
 def processSplitTemp(splitName, jsonPath):
-    print("f\n==={splitName}===")
+    print(f"\n==={splitName}===")
     #Load only the progress up until this point
     done = loadProgress(splitName)
     print(f"skipping LLM calls for now and using {len(done)}")
@@ -205,8 +205,8 @@ def processSplitTemp(splitName, jsonPath):
 def main():
     os.makedirs(config.RATIONALES, exist_ok=True)
     processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
-    #processSplit("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
-    #processSplit("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
+    processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
+    processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
     print("\nStep 2 complete. You can now run textTraining.py")
  
 if __name__ == "__main__":

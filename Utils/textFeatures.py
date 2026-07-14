@@ -38,18 +38,25 @@ def extractFeatures(text):
     word_count = len(words)
     char_len = len(text)
  
+    #gets the average characters per word
     avg_word_len = (sum(len(w) for w in words) / word_count) if word_count > 0 else 0.0
- 
+    
+    #gets the amount of exclamation and question signs, fake or sensational posts overuse these
     exclam = min(text.count("!"), 10)
     question = min(text.count("?"), 10)
- 
+    
+    #gets all caps letters
     letters = [c for c in text if c.isalpha()]
+    #gets the fraction of capital letters from the whole text
     capital_ratio = (sum(1 for c in letters if c.isupper()) / len(letters)) if letters else 0.0
  
     lower_words = [w.lower() for w in words]
+    #this is the diversity of the language and is calculated using unique words divided by the total
+    #amount of words
     type_token_ratio = (len(set(lower_words)) / word_count) if word_count > 0 else 0.0
  
     punct_count = sum(1 for c in text if c in string.punctuation)
+    #how many punctuation characters are inside the provided text
     punct_density = (punct_count / char_len) if char_len > 0 else 0.0
  
     features = [

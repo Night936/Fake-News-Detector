@@ -1,17 +1,17 @@
 """
-Extension of the original ARG utils/dataloader.py.
+Extension of the original ARG utils/dataloader.py but adapted to work with the fakeddit dataset
 
 Differences from the original:
   1. Reads the extra "extra_features" field (VADER + lexical vector) and
      returns it as an additional tensor, so the model can fuse it in.
-  2. Uses modern pandas (no df.append, which is removed in pandas>=2.0).
+  2. Gets adapted to use any version of pandas beyond the 2.0
   3. source_id is already a plain sequential int from step 1, so no casting
      surprises with Fakeddit's alphanumeric Reddit ids.
 
 Everything else (word2input, label_dict, label_dict_ftr_pred, the overall
 shape of the dataset) is intentionally kept identical to ARG's original so
 that models/arg_fakeddit.py stays a close, easy-to-audit extension of
-models/arg.py rather than a rewrite.
+models/argFakeddit.py rather than a rewrite.
 """
 
 import json
@@ -21,10 +21,13 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 from transformers import BertTokenizer
 
+#The following are lookup tables that convert characters to their respective numerical integer
 label_dict = {"real": 0, "fake": 1, 0: 0, 1: 1}
 label_dict_ftr_pred = {"real": 0, "fake": 1, "other": 2, 0: 0, 1: 1, 2: 2}
 
-
+#Runs a BERT tokenizer which attaches to every received text an ID for every subword (every 
+#subword is calculated using max_len) and a mask, which differentiates what is real content and
+#a padding (lets say a space, since every word gets calculated using max_len)
 def word2input(texts, max_len, tokenizer):
     token_ids = []
     for text in texts:
@@ -45,6 +48,11 @@ def word2input(texts, max_len, tokenizer):
     return token_ids, masks
 
 
+#Reads the rationales given by the llm inside the jsons and then forms three independent tensors
+#to pass into BERT, one with the content, and two for each rationale, it also wraps everything
+#into a tensorDataset and a Pytorch DataLoader to handle batching and shuffling in further steps
+#we end up with a table that contains an id, a label, both rationales, both LLM predictions,
+#both accuracy labels (from the dataset) and the extra features
 def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_dim):
     tokenizer = BertTokenizer.from_pretrained(bert_path)
 
@@ -115,7 +123,10 @@ def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_
     )
     return dataloader
 
-
+#takes a touple of tensors given by the dataloader and turns them into a labeled dictionary 
+#moving into a gpu if requested by the use_cuda flag (for images) 
+#based off of the original utils file found in the ARG code but with the extra features to use
+#sentiment based approaches
 def data2gpu(batch, use_cuda):
     fields = [
         "content", "content_masks", "FTR_2_pred", "FTR_2_acc", "FTR_3_pred", "FTR_3_acc",

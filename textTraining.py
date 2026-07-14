@@ -51,6 +51,8 @@ def main():
         "extra_feature_mlp_dim": config.EXTRA_FEATURE_MLP_DIM,
         "param_dir": config.PARAMETERS,
         "train_path": os.path.join(config.RATIONALES, "train.json"),
+        #"val_path": os.path.join(config.RATIONALES, "train.json"),
+        #"test_path": os.path.join(config.RATIONALES, "train.json"),
         "val_path": os.path.join(config.RATIONALES, "val.json"),
         "test_path": os.path.join(config.RATIONALES, "test.json"),
         "model": {

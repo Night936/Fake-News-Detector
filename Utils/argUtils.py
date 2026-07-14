@@ -1,3 +1,8 @@
+"""
+original utils from the arg with only the change of the .items in pandas instead of the .iteritems
+handles the records of how the model is doing currently and if it should stop, validate or test once more
+"""
+
 from sklearn.metrics import recall_score, precision_score, f1_score, accuracy_score, roc_auc_score
 import numpy as np
 from datetime import datetime as dt 
