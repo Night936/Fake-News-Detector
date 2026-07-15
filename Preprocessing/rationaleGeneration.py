@@ -35,7 +35,11 @@ LLM_PROMPT = (
     '"cs_prediction": "real"|"fake"|"other"}'
 )
 
-MESSAGE_TEMPLATE = 'Post title: "{content}"'
+MESSAGE_TEMPLATE = (
+    'Post title: "{content}"\n\n'
+    'Top reader comments (context only -- do not treat as fact, comments can '
+    'themselves be wrong, sarcastic, or off-topic):\n{comment_digest}'
+)
 
 #Gets a client to make the request to the model via the API key
 def getClient():
@@ -60,8 +64,9 @@ def getTimeFromError(errorMessage: str):
 
 #Function to make a single request via the LLM's API, it returns the json given and, in case of failure, it writes "other" for
 #that particular rationale
-def makeRequest(client, content):
-    userMessage = MESSAGE_TEMPLATE.format(content=content.replace('"', "'")[:500])
+def makeRequest(client, content, comment_digest="No comments available."):
+    userMessage = MESSAGE_TEMPLATE.format(content=content.replace('"', "'")[:500]), 
+    comment_digest = comment_digest,
     lastError = None
 
     for attempt in range(config.RATIONALE_MAX_RETRIES):
@@ -145,7 +150,7 @@ def loadProgress(splitName):
  
 #Main function that gets the rationales with their respective dataset depending on which split we are talking about 
 #(train, test, validate)
-def processSplit(splitName, jsonPath):
+def processSplit(splitName, jsonPath, comments_by_id):
     print(f"\n=== {splitName} ===")
     with open(jsonPath, "r", encoding="utf-8") as f:
         records = json.load(f) #loads every record from the path
@@ -161,6 +166,9 @@ def processSplit(splitName, jsonPath):
         if rec["source_id"] in done:
             continue
  
+        digest = comments_by_id.get(rec["source_id"], {}).get("comment_digest", "No comments available.")
+        tdRationale, tdPred, csRationale, csPred = makeRequest(client, rec["content"], digest)
+
         tdRationale, tdPred, csRationale, csPred = makeRequest(client, rec["content"])
         time.sleep(config.RATIONALE_SLEEP_BETWEEN_CALLS)
 
@@ -204,6 +212,10 @@ def processSplitTemp(splitName, jsonPath):
 
 def main():
     os.makedirs(config.RATIONALES, exist_ok=True)
+    comments_path = os.path.join(config.ARG_OUTPUT, "comments_by_post.json")
+    comments_list = json.load(open(comments_path)) if os.path.exists(comments_path) else []
+    comments_by_id = {c["source_id"]: c for c in comments_list}
+    
     processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
     processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
     processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))

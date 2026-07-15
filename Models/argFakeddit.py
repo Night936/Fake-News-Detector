@@ -54,6 +54,19 @@ class ARGFakedditModel(nn.Module):
         # classification head now takes [final_feature ; extra_embedding]
         self.mlp = MLP(emb_dim + extra_mlp_dim, mlp_dims, mlp_dropout)
 
+
+        comment_dim = config["comment_feature_dim"]          # 8, from Utils/commentFeatures.py
+        comment_mlp_dim = config["comment_feature_mlp_dim"]  # e.g. 32
+        self.comment_feature_mlp = nn.Sequential(
+            nn.Linear(comment_dim, 24),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(24, comment_mlp_dim),
+            nn.ReLU(),
+        )
+        # classification head now takes [final_feature ; extra_embedding]
+        self.mlp = MLP(emb_dim + extra_mlp_dim + comment_mlp_dim, mlp_dims, mlp_dropout)
+        
         self.hard_ftr_2_attention = MaskAttention(emb_dim)
         self.hard_mlp_ftr_2 = nn.Sequential(
             nn.Linear(emb_dim, mlp_dims[-1]), nn.ReLU(), nn.Linear(mlp_dims[-1], 1), nn.Sigmoid()
@@ -130,6 +143,15 @@ class ARGFakedditModel(nn.Module):
         final_feature, _ = self.aggregator(all_feature)
 
         extra_embedding = self.extra_feature_mlp(extra_features)
+        comment_embedding = self.comment_feature_mlp(kwargs["comment_features"])
+        fused_feature = torch.cat([final_feature, extra_embedding, comment_embedding], dim=1)
+        label_pred = self.mlp(fused_feature)
+        
+        comment_digest_feature = self.bert_FTR(comment_ids, attention_mask=comment_masks)[0]
+        comment_pooled, _ = self.hard_ftr_2_attention(comment_digest_feature)  # reuse an existing MaskAttention
+
+        text_comment_similarity = F.cosine_similarity(attn_content, comment_pooled, dim=1).unsqueeze(1)
+
         fused_feature = torch.cat([final_feature, extra_embedding], dim=1)
 
         label_pred = self.mlp(fused_feature)
