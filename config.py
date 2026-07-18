@@ -64,5 +64,14 @@ LLM_JUDGMENT_PREDICTOR_WEIGHT = 1.0
 #See Preprocessing/build_arg_format_dataset.py for the exact feature list.
 EXTRA_FEATURE_DIM = 12
 EXTRA_FEATURE_MLP_DIM = 64
+
+#Social / comment-engagement feature vector size: 8, produced by
+#Utils/commentFeatures.py -> extractCommentSectionFeatures():
+#[log1p(comment_count), avg_compound, spread, avg_ups, top_level_frac,
+# downvoted_frac, min_compound, max_compound]
+#This is the "social branch" signal (comment volume/sentiment/engagement),
+#separate from the per-post VADER/lexical EXTRA_FEATURE_DIM above.
+COMMENT_FEATURE_DIM = 8
+COMMENT_FEATURE_MLP_DIM = 32
  
 USE_CUDA = True

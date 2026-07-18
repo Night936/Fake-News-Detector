@@ -64,9 +64,23 @@ def getTimeFromError(errorMessage: str):
 
 #Function to make a single request via the LLM's API, it returns the json given and, in case of failure, it writes "other" for
 #that particular rationale
+#
+# SOCIAL BRANCH FIX: the previous version of this function had two bugs that
+# together meant the comment digest never actually reached the model:
+#   1. `MESSAGE_TEMPLATE.format(content=...)` was called WITHOUT the
+#      `comment_digest` kwarg, even though the template has a `{comment_digest}`
+#      placeholder -- str.format() raises KeyError when a placeholder used in
+#      the template string isn't supplied, so this call would crash outright.
+#   2. Both `userMessage = MESSAGE_TEMPLATE.format(...), ` and
+#      `comment_digest = comment_digest, ` ended in a trailing comma, which
+#      silently turns the right-hand side into a 1-item tuple instead of a
+#      string -- so even patching bug #1 wouldn't have produced a valid
+#      message body to send to the chat API.
 def makeRequest(client, content, comment_digest="No comments available."):
-    userMessage = MESSAGE_TEMPLATE.format(content=content.replace('"', "'")[:500]), 
-    comment_digest = comment_digest,
+    userMessage = MESSAGE_TEMPLATE.format(
+        content=content.replace('"', "'")[:500],
+        comment_digest=comment_digest,
+    )
     lastError = None
 
     for attempt in range(config.RATIONALE_MAX_RETRIES):
@@ -147,9 +161,31 @@ def loadProgress(splitName):
                     continue
                 done[rec["source_id"]] = rec
     return done
+
+#Looks up the pre-computed social/engagement feature vector for a post (see
+#Preprocessing/commentAggregation.py). Falls back to a zero vector for posts
+#with no comment thread at all, so every record always carries a
+#COMMENT_FEATURE_DIM-length vector downstream, regardless of whether it had
+#comments.
+def getCommentInfo(sourceId, comments_by_id):
+    info = comments_by_id.get(sourceId, {})
+    return {
+        "comment_features": info.get("comment_features", [0.0] * config.COMMENT_FEATURE_DIM),
+        "comment_count": info.get("comment_count", 0),
+    }
  
 #Main function that gets the rationales with their respective dataset depending on which split we are talking about 
 #(train, test, validate)
+#
+# SOCIAL BRANCH FIX: previously this function was defined but never called
+# from main() -- main() called processSplitTemp() instead, which never
+# touches the LLM or comments_by_id at all. It also used to call
+# makeRequest() twice per record (once with the digest, once without),
+# throwing away the digest-informed result and keeping the one generated
+# with no comment context -- so comments never influenced the rationale even
+# when this function *was* used. Both issues are fixed below: a single
+# makeRequest() call using the digest, and the resulting comment_features
+# vector is attached to the output record so it reaches train/val/test.json.
 def processSplit(splitName, jsonPath, comments_by_id):
     print(f"\n=== {splitName} ===")
     with open(jsonPath, "r", encoding="utf-8") as f:
@@ -166,12 +202,11 @@ def processSplit(splitName, jsonPath, comments_by_id):
         if rec["source_id"] in done:
             continue
  
+        commentInfo = getCommentInfo(rec["source_id"], comments_by_id)
         digest = comments_by_id.get(rec["source_id"], {}).get("comment_digest", "No comments available.")
+
         tdRationale, tdPred, csRationale, csPred = makeRequest(client, rec["content"], digest)
-
-        tdRationale, tdPred, csRationale, csPred = makeRequest(client, rec["content"])
         time.sleep(config.RATIONALE_SLEEP_BETWEEN_CALLS)
-
  
         recOut = dict(rec)
         recOut["td_rationale"] = tdRationale
@@ -180,6 +215,8 @@ def processSplit(splitName, jsonPath, comments_by_id):
         recOut["cs_rationale"] = csRationale
         recOut["cs_pred"] = csPred
         recOut["cs_acc"] = int(csPred == rec["label"])
+        recOut["comment_features"] = commentInfo["comment_features"]
+        recOut["comment_count"] = commentInfo["comment_count"]
  
         ckptFile.write(json.dumps(recOut, ensure_ascii=False) + "\n")
         ckptFile.flush()
@@ -195,12 +232,29 @@ def processSplit(splitName, jsonPath, comments_by_id):
     with open(outPath, "w", encoding="utf-8") as f:
         json.dump(finalRecords, f, ensure_ascii=False, indent=2)
     print(f"wrote {outPath}")
- 
-def processSplitTemp(splitName, jsonPath):
+
+#Resume-only variant: writes out whatever has already been checkpointed
+#WITHOUT making any new LLM calls (useful if you've already paid for the
+#rationale generation pass and just want to rebuild train/val/test.json from
+#the checkpoint, e.g. after changing something downstream).
+#
+# SOCIAL BRANCH FIX: also attaches comment_features here, mirroring
+# processSplit, since older checkpoints written before this fix won't have
+# them yet -- otherwise records rebuilt purely from checkpoint would silently
+# fall back to a zero comment-feature vector even when real comment data
+# exists in comments_by_post.json.
+def processSplitTemp(splitName, jsonPath, comments_by_id):
     print(f"\n==={splitName}===")
     #Load only the progress up until this point
     done = loadProgress(splitName)
     print(f"skipping LLM calls for now and using {len(done)}")
+
+    for sourceId, rec in done.items():
+        if "comment_features" not in rec:
+            commentInfo = getCommentInfo(sourceId, comments_by_id)
+            rec["comment_features"] = commentInfo["comment_features"]
+            rec["comment_count"] = commentInfo["comment_count"]
+
     #we put the done values inside a list to then put them in the final json
     finalRecords = list(done.values())
     
@@ -214,12 +268,30 @@ def main():
     os.makedirs(config.RATIONALES, exist_ok=True)
     comments_path = os.path.join(config.ARG_OUTPUT, "comments_by_post.json")
     comments_list = json.load(open(comments_path)) if os.path.exists(comments_path) else []
+    if not comments_list:
+        print(
+            "WARNING: comments_by_post.json not found or empty -- did you run "
+            "Preprocessing/commentAggregation.py first? Continuing with zero "
+            "vectors for the social/comment feature branch."
+        )
     comments_by_id = {c["source_id"]: c for c in comments_list}
-    
-    processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"))
-    processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"))
-    processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"))
+
+    # SOCIAL BRANCH FIX: main() now calls the function that actually talks to
+    # the LLM and attaches comment_features (processSplit), instead of
+    # processSplitTemp, which used to run unconditionally here and never
+    # generated a rationale or touched comments_by_id at all.
+    processSplit("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
+    processSplit("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
+    processSplit("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
     print("\nStep 2 complete. You can now run textTraining.py")
+
+    # If you've already generated rationales in a previous run and just want
+    # to rebuild train/val/test.json from the existing checkpoints without
+    # spending new LLM calls, comment out the three processSplit(...) lines
+    # above and use this instead:
+    # processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
+    # processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
+    # processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
  
 if __name__ == "__main__":
     main()

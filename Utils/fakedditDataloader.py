@@ -4,8 +4,12 @@ Extension of the original ARG utils/dataloader.py but adapted to work with the f
 Differences from the original:
   1. Reads the extra "extra_features" field (VADER + lexical vector) and
      returns it as an additional tensor, so the model can fuse it in.
-  2. Gets adapted to use any version of pandas beyond the 2.0
-  3. source_id is already a plain sequential int from step 1, so no casting
+  2. Reads the "comment_features" field (comment volume/sentiment/engagement
+     vector, see Utils/commentFeatures.py + Preprocessing/commentAggregation.py)
+     and returns it as an additional tensor -- this is the "social branch"
+     signal. Posts with no comment thread default to a zero vector.
+  3. Gets adapted to use any version of pandas beyond the 2.0
+  4. source_id is already a plain sequential int from step 1, so no casting
      surprises with Fakeddit's alphanumeric Reddit ids.
 
 Everything else (word2input, label_dict, label_dict_ftr_pred, the overall
@@ -52,8 +56,9 @@ def word2input(texts, max_len, tokenizer):
 #to pass into BERT, one with the content, and two for each rationale, it also wraps everything
 #into a tensorDataset and a Pytorch DataLoader to handle batching and shuffling in further steps
 #we end up with a table that contains an id, a label, both rationales, both LLM predictions,
-#both accuracy labels (from the dataset) and the extra features
-def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_dim):
+#both accuracy labels (from the dataset), the extra (VADER/lexical) features, and the
+#comment/social engagement features
+def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_dim, comment_feature_dim):
     tokenizer = BertTokenizer.from_pretrained(bert_path)
 
     data_list = json.load(open(path, "r", encoding="utf-8"))
@@ -71,6 +76,10 @@ def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_
                 "FTR_2_acc": item["td_acc"],
                 "FTR_3_acc": item["cs_acc"],
                 "extra_features": item.get("extra_features", [0.0] * extra_feature_dim),
+                # social branch: comment volume/sentiment/engagement vector.
+                # Defaults to zeros for posts with no comment thread, or for
+                # records written before this field existed.
+                "comment_features": item.get("comment_features", [0.0] * comment_feature_dim),
             }
         )
     df_data = pd.DataFrame(rows)
@@ -98,6 +107,9 @@ def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_
     extra_features = torch.tensor(
         df_data["extra_features"].tolist(), dtype=torch.float
     )
+    comment_features = torch.tensor(
+        df_data["comment_features"].tolist(), dtype=torch.float
+    )
 
     dataset = TensorDataset(
         content_token_ids,
@@ -113,6 +125,7 @@ def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_
         label,
         item_id,
         extra_features,
+        comment_features,
     )
     dataloader = DataLoader(
         dataset=dataset,
@@ -126,11 +139,12 @@ def get_dataloader(path, max_len, batch_size, shuffle, bert_path, extra_feature_
 #takes a touple of tensors given by the dataloader and turns them into a labeled dictionary 
 #moving into a gpu if requested by the use_cuda flag (for images) 
 #based off of the original utils file found in the ARG code but with the extra features to use
-#sentiment based approaches
+#sentiment based approaches, plus the comment/social engagement features
 def data2gpu(batch, use_cuda):
     fields = [
         "content", "content_masks", "FTR_2_pred", "FTR_2_acc", "FTR_3_pred", "FTR_3_acc",
         "FTR_2", "FTR_2_masks", "FTR_3", "FTR_3_masks", "label", "id", "extra_features",
+        "comment_features",
     ]
     batch_data = dict(zip(fields, batch))
     if use_cuda:

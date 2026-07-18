@@ -12,6 +12,7 @@ Creates a 12 dimensional vector that includes the following:
 [9] capital-letter ratio
 [10] type-token ratio (lexical diversity)
 [11] punctuation density
+[12] comments
 
 Used for VADER sentiment and lexical + stylistic analysis
 """
