@@ -5,6 +5,7 @@ import sys
 import re
 import time 
 from openai import OpenAI, RateLimitError
+pip install anthropic
 
 #Allows this file to go 2 directories above to get the config file
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -41,16 +42,72 @@ MESSAGE_TEMPLATE = (
     'themselves be wrong, sarcastic, or off-topic):\n{comment_digest}'
 )
 
-#Gets a client to make the request to the model via the API key
 def getClient():
-    #api_key = os.getenv("GROQ_API")
-    api_key = os.environ.get("GROQ_API")
-    
+    api_key = os.environ.get("DEEPINFRA_API_KEY")
+
     if not api_key:
         raise RuntimeError(
-            "Set the GROQ_API_KEY environment variable first "
+            "Set the DEEPINFRA_API_KEY environment variable first "
         )
     return OpenAI(api_key=api_key, base_url=config.GROQ_BASE_URL)
+
+from anthropic import Anthropic, RateLimitError
+
+def getClient():
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("Set the ANTHROPIC_API_KEY environment variable first")
+    return Anthropic(api_key=api_key)
+
+def makeRequest(client, content, comment_digest="No comments available."):
+    userMessage = MESSAGE_TEMPLATE.format(
+        content=content.replace('"', "'")[:500],
+        comment_digest=comment_digest,
+    )
+    lastError = None
+
+    for attempt in range(config.RATIONALE_MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=260,
+                temperature=0.2,
+                system=LLM_PROMPT,          # system is a separate param, not a messages[0] entry
+                messages=[{"role": "user", "content": userMessage}],
+            )
+            raw = response.content[0].text.strip().strip("`")
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+            parsed = json.loads(raw)
+
+            tdPred = str(parsed.get("td_prediction", "other")).strip().lower()
+            if tdPred not in PREDICTED_VALS:
+                tdPred = "other"
+            csPred = str(parsed.get("cs_prediction", "other")).strip().lower()
+            if csPred not in PREDICTED_VALS:
+                csPred = "other"
+
+            tdRationale = str(parsed.get("td_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
+            csRationale = str(parsed.get("cs_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
+            return tdRationale, tdPred, csRationale, csPred
+
+        except RateLimitError as e:
+            waitTime = 60.0   # Anthropic returns a retry-after header rather than
+            retry_after = getattr(e, "response", None)
+            if retry_after is not None and "retry-after" in retry_after.headers:
+                waitTime = float(retry_after.headers["retry-after"]) + 2.0
+            print(f"[rate limited] sleeping {waitTime:.1f}s before retry...")
+            time.sleep(waitTime)
+            lastError = e
+            continue
+        except Exception as e:
+            lastError = e
+            attempt += 1
+            time.sleep(1.0 + attempt)
+
+    print(f"LLM call failed after {lastError}; using other")
+    return FAILED_RATIONALE_MESSAGE, "other", FAILED_RATIONALE_MESSAGE, "other"
+
 
 #Recieves the error message from the API request and gets how long it should wait before trying once more using REGEX
 def getTimeFromError(errorMessage: str):

@@ -37,10 +37,11 @@ LABEL_SOURCE = "6_way_label" #The final dissemination on wether it is fake or no
                              #probabilistic it takes into account the 6 way label
 
 #LLM Config based on Groq free tier rate limits
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+#LLM Config -- switched from Groq to DeepInfra (OpenAI-compatible endpoint)
+GROQ_MODEL = "openai/gpt-oss-120b"          #confirm exact string on DeepInfra's model page before running
+GROQ_BASE_URL = "https://api.deepinfra.com/v1/openai"
 RATIONALE_MAX_RETRIES = 3
-RATIONALE_SLEEP_BETWEEN_CALLS = 0.05  #seconds
+RATIONALE_SLEEP_BETWEEN_CALLS = 0.05        #seconds -- can likely be lowered now that free-tier rate limiting is gone
 
 #BERT Hyperparameters
 BERT_PATH = "bert-base-uncased"  
@@ -75,3 +76,21 @@ COMMENT_FEATURE_DIM = 8
 COMMENT_FEATURE_MLP_DIM = 32
  
 USE_CUDA = True
+
+# ---------------------------------------------------------------------------
+# Progressive Fusion Network (Models/progressiveFusion.py) settings
+# ---------------------------------------------------------------------------
+# Common dimensionality that BERT's rationale-fused text vector, the Swin
+# spatial stages, and the VGG19 frequency stages are all projected into
+# before the Mlp-Mixer fuses them. Kept equal to EMB_DIM (768) by default so
+# the text branch doesn't need an extra projection layer at all, but it's
+# independent -- lower it (e.g. 256) to shrink the mixer and speed up
+# training if you're compute constrained.
+PFN_FUSION_DIM = EMB_DIM
+ 
+# The paper uses batch size 12 and lr 0.001; the batch is heavier here than
+# in the paper because every sample carries a BERT pass over 3 texts *and*
+# a Swin *and* a VGG19 forward pass, so this defaults smaller/gentler than
+# PFN's own paper settings -- raise PFN_BATCH_SIZE if your GPU has headroom.
+PFN_BATCH_SIZE = 8
+PFN_LR = 1e-4
