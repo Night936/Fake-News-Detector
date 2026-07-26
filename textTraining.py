@@ -1,9 +1,13 @@
 """
-Entry point for training the text branch (ARG + rationales + VADER/lexical).
+Entry point for training the text branch (ARG + rationales + VADER/lexical
++ comment/social engagement features).
 
 Run from Colab, after steps 1 and 2 in preprocessing/ have produced
 train.json / val.json / test.json:
 
+    !python Preprocessing/jsonCreation.py
+    !python Preprocessing/commentAggregation.py   # <-- builds the social branch's comment_features
+    !python Preprocessing/rationaleGeneration.py   # <-- attaches comment_features + rationales
     !python train_text_branch.py
 
 Requires models/layers.py and utils/utils.py from your existing ARG repo
@@ -49,6 +53,11 @@ def main():
         "co_attention_dim": config.CO_ATTENTION_DIM,
         "extra_feature_dim": config.EXTRA_FEATURE_DIM,
         "extra_feature_mlp_dim": config.EXTRA_FEATURE_MLP_DIM,
+        # social branch: comment volume/sentiment/engagement feature sizing
+        # (previously missing from this config dict, which caused
+        # ARGFakedditModel.__init__ to raise KeyError on construction)
+        "comment_feature_dim": config.COMMENT_FEATURE_DIM,
+        "comment_feature_mlp_dim": config.COMMENT_FEATURE_MLP_DIM,
         "param_dir": config.PARAMETERS,
         "train_path": os.path.join(config.RATIONALES, "train.json"),
         #"val_path": os.path.join(config.RATIONALES, "train.json"),

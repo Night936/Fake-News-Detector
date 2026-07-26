@@ -1,13 +1,30 @@
 """
 Extension of the original models/arg.py ARGModel.
 
-The only structural change: a small MLP projects the 12-dim VADER+lexical
-feature vector into a 64-dim embedding, which gets concatenated onto the
-BERT+rationale final_feature right before the classification head. This
-keeps the entire rationale-fusion mechanism (MaskAttention aggregator,
-co-attention, cross-attention, gating) exactly as ARG's authors designed
-it -- we're only widening the final decision layer's input, not touching
-how text and rationales talk to each other.
+Structural changes from the original ARG model:
+  1. A small MLP projects the 12-dim VADER+lexical feature vector
+     (extra_features) into a 64-dim embedding.
+  2. A small MLP projects the 8-dim comment volume/sentiment/engagement
+     vector (comment_features -- the "social branch": see
+     Utils/commentFeatures.py and Preprocessing/commentAggregation.py) into
+     a comment_feature_mlp_dim embedding.
+Both get concatenated onto the BERT+rationale final_feature right before the
+classification head. This keeps the entire rationale-fusion mechanism
+(MaskAttention aggregator, co-attention, cross-attention, gating) exactly as
+ARG's authors designed it -- we're only widening the final decision layer's
+input, not touching how text and rationales talk to each other.
+
+SOCIAL BRANCH FIX (see project write-up for full detail): the previous
+version of this file had a second, broken attempt at using comments that
+tokenized a "comment digest" via undefined `comment_ids` / `comment_masks`
+variables, called `F.cosine_similarity` without importing
+`torch.nn.functional as F`, declared `self.mlp` twice (silently discarding
+the first, correctly-sized definition), and then overwrote `fused_feature`
+right before the classifier call in a way that dropped the comment embedding
+it had just computed -- so the branch could never construct or run. That
+code has been removed. What remains below is the single, working numeric
+comment-feature fusion path (mirrors the extra_features pattern, which
+already worked), wired all the way from config -> dataloader -> model.
 """
 
 import os
@@ -51,8 +68,21 @@ class ARGFakedditModel(nn.Module):
             nn.ReLU(),
         )
 
-        # classification head now takes [final_feature ; extra_embedding]
-        self.mlp = MLP(emb_dim + extra_mlp_dim, mlp_dims, mlp_dropout)
+        # social / comment-engagement fusion branch ("social branch")
+        comment_dim = config["comment_feature_dim"]          # 8, from Utils/commentFeatures.py
+        comment_mlp_dim = config["comment_feature_mlp_dim"]  # e.g. 32
+        self.comment_feature_mlp = nn.Sequential(
+            nn.Linear(comment_dim, 24),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(24, comment_mlp_dim),
+            nn.ReLU(),
+        )
+
+        # classification head takes [final_feature ; extra_embedding ; comment_embedding]
+        # (single definition -- the previous duplicate `self.mlp = ...` that
+        # silently overrode this with a mismatched size has been removed)
+        self.mlp = MLP(emb_dim + extra_mlp_dim + comment_mlp_dim, mlp_dims, mlp_dropout)
 
         self.hard_ftr_2_attention = MaskAttention(emb_dim)
         self.hard_mlp_ftr_2 = nn.Sequential(
@@ -94,6 +124,7 @@ class ARGFakedditModel(nn.Module):
         FTR_2, FTR_2_masks = kwargs["FTR_2"], kwargs["FTR_2_masks"]
         FTR_3, FTR_3_masks = kwargs["FTR_3"], kwargs["FTR_3_masks"]
         extra_features = kwargs["extra_features"]
+        comment_features = kwargs["comment_features"]
 
         content_feature = self.bert_content(content, attention_mask=content_masks)[0]
         FTR_2_feature = self.bert_FTR(FTR_2, attention_mask=FTR_2_masks)[0]
@@ -130,7 +161,8 @@ class ARGFakedditModel(nn.Module):
         final_feature, _ = self.aggregator(all_feature)
 
         extra_embedding = self.extra_feature_mlp(extra_features)
-        fused_feature = torch.cat([final_feature, extra_embedding], dim=1)
+        comment_embedding = self.comment_feature_mlp(comment_features)
+        fused_feature = torch.cat([final_feature, extra_embedding, comment_embedding], dim=1)
 
         label_pred = self.mlp(fused_feature)
         gate_value = torch.cat([reweight_score_ftr_2, reweight_score_ftr_3], dim=1)
@@ -164,9 +196,18 @@ class Trainer:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
         recorder = Recorder(cfg["early_stop"])
 
-        train_loader = get_dataloader(cfg["train_path"], cfg["max_len"], cfg["batchsize"], True, cfg["bert_path"], cfg["extra_feature_dim"])
-        val_loader = get_dataloader(cfg["val_path"], cfg["max_len"], cfg["batchsize"], False, cfg["bert_path"], cfg["extra_feature_dim"])
-        test_loader = get_dataloader(cfg["test_path"], cfg["max_len"], cfg["batchsize"], False, cfg["bert_path"], cfg["extra_feature_dim"])
+        train_loader = get_dataloader(
+            cfg["train_path"], cfg["max_len"], cfg["batchsize"], True,
+            cfg["bert_path"], cfg["extra_feature_dim"], cfg["comment_feature_dim"],
+        )
+        val_loader = get_dataloader(
+            cfg["val_path"], cfg["max_len"], cfg["batchsize"], False,
+            cfg["bert_path"], cfg["extra_feature_dim"], cfg["comment_feature_dim"],
+        )
+        test_loader = get_dataloader(
+            cfg["test_path"], cfg["max_len"], cfg["batchsize"], False,
+            cfg["bert_path"], cfg["extra_feature_dim"], cfg["comment_feature_dim"],
+        )
 
         for epoch in range(cfg["epoch"]):
             print(f"---------- epoch {epoch} ----------")
