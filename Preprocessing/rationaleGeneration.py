@@ -3,9 +3,10 @@ import json
 import os
 import sys
 import re
-import time 
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from openai import OpenAI, RateLimitError
-pip install anthropic
 
 #Allows this file to go 2 directories above to get the config file
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,72 +43,20 @@ MESSAGE_TEMPLATE = (
     'themselves be wrong, sarcastic, or off-topic):\n{comment_digest}'
 )
 
+#Gets a client to make the request to the model via the API key
+#REVERTED: back to Groq (openai-compatible endpoint) for tonight's run --
+#DeepInfra account approval hasn't come through yet. Only this function and
+#config.GROQ_MODEL / config.GROQ_BASE_URL need to change to switch providers
+#again later; everything below (makeRequest, checkpointing, parallel runner)
+#is provider-agnostic.
 def getClient():
-    api_key = os.environ.get("DEEPINFRA_API_KEY")
+    api_key = os.environ.get("GROQ_API")
 
     if not api_key:
         raise RuntimeError(
-            "Set the DEEPINFRA_API_KEY environment variable first "
+            "Set the GROQ_API environment variable first "
         )
     return OpenAI(api_key=api_key, base_url=config.GROQ_BASE_URL)
-
-from anthropic import Anthropic, RateLimitError
-
-def getClient():
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("Set the ANTHROPIC_API_KEY environment variable first")
-    return Anthropic(api_key=api_key)
-
-def makeRequest(client, content, comment_digest="No comments available."):
-    userMessage = MESSAGE_TEMPLATE.format(
-        content=content.replace('"', "'")[:500],
-        comment_digest=comment_digest,
-    )
-    lastError = None
-
-    for attempt in range(config.RATIONALE_MAX_RETRIES):
-        try:
-            response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=260,
-                temperature=0.2,
-                system=LLM_PROMPT,          # system is a separate param, not a messages[0] entry
-                messages=[{"role": "user", "content": userMessage}],
-            )
-            raw = response.content[0].text.strip().strip("`")
-            if raw.lower().startswith("json"):
-                raw = raw[4:].strip()
-            parsed = json.loads(raw)
-
-            tdPred = str(parsed.get("td_prediction", "other")).strip().lower()
-            if tdPred not in PREDICTED_VALS:
-                tdPred = "other"
-            csPred = str(parsed.get("cs_prediction", "other")).strip().lower()
-            if csPred not in PREDICTED_VALS:
-                csPred = "other"
-
-            tdRationale = str(parsed.get("td_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
-            csRationale = str(parsed.get("cs_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
-            return tdRationale, tdPred, csRationale, csPred
-
-        except RateLimitError as e:
-            waitTime = 60.0   # Anthropic returns a retry-after header rather than
-            retry_after = getattr(e, "response", None)
-            if retry_after is not None and "retry-after" in retry_after.headers:
-                waitTime = float(retry_after.headers["retry-after"]) + 2.0
-            print(f"[rate limited] sleeping {waitTime:.1f}s before retry...")
-            time.sleep(waitTime)
-            lastError = e
-            continue
-        except Exception as e:
-            lastError = e
-            attempt += 1
-            time.sleep(1.0 + attempt)
-
-    print(f"LLM call failed after {lastError}; using other")
-    return FAILED_RATIONALE_MESSAGE, "other", FAILED_RATIONALE_MESSAGE, "other"
-
 
 #Recieves the error message from the API request and gets how long it should wait before trying once more using REGEX
 def getTimeFromError(errorMessage: str):
@@ -121,18 +70,6 @@ def getTimeFromError(errorMessage: str):
 
 #Function to make a single request via the LLM's API, it returns the json given and, in case of failure, it writes "other" for
 #that particular rationale
-#
-# SOCIAL BRANCH FIX: the previous version of this function had two bugs that
-# together meant the comment digest never actually reached the model:
-#   1. `MESSAGE_TEMPLATE.format(content=...)` was called WITHOUT the
-#      `comment_digest` kwarg, even though the template has a `{comment_digest}`
-#      placeholder -- str.format() raises KeyError when a placeholder used in
-#      the template string isn't supplied, so this call would crash outright.
-#   2. Both `userMessage = MESSAGE_TEMPLATE.format(...), ` and
-#      `comment_digest = comment_digest, ` ended in a trailing comma, which
-#      silently turns the right-hand side into a 1-item tuple instead of a
-#      string -- so even patching bug #1 wouldn't have produced a valid
-#      message body to send to the chat API.
 def makeRequest(client, content, comment_digest="No comments available."):
     userMessage = MESSAGE_TEMPLATE.format(
         content=content.replace('"', "'")[:500],
@@ -163,8 +100,8 @@ def makeRequest(client, content, comment_digest="No comments available."):
 
             csPred = str(parsed.get("cs_prediction", "other")).strip().lower()
             if csPred not in PREDICTED_VALS:
-                csPred = "other"    
-            
+                csPred = "other"
+
             tdRationale = str(parsed.get("td_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
             csRationale = str(parsed.get("cs_rationale", "")).strip() or FAILED_RATIONALE_MESSAGE
 
@@ -175,17 +112,17 @@ def makeRequest(client, content, comment_digest="No comments available."):
             waitTime = getTimeFromError(str(e))
             if waitTime is None: #if it couldnt be determined we wait 60 seconds
                 waitTime = 60.0
-            waitTime += 2.0 
+            waitTime += 2.0
             print(f"[rate limited] sleeping {waitTime:.1f}s before retry...")
             time.sleep(waitTime)
             lastError = e
             continue
- 
+
         except Exception as e:
             lastError = e
             attempt += 1
             time.sleep(1.0 + attempt)
- 
+
     print(f"LLM call failed after {lastError}; using other")
     return FAILED_RATIONALE_MESSAGE, "other", FAILED_RATIONALE_MESSAGE, "other"
 
@@ -193,17 +130,17 @@ def makeRequest(client, content, comment_digest="No comments available."):
 def checkOutput(splitName):
     return os.path.join(config.RATIONALES, f"{splitName}_checkpoint.jsonl")
 
-#Checks if an already written row in the rationales file has the other label, which indicates that the process could not be 
+#Checks if an already written row in the rationales file has the other label, which indicates that the process could not be
 #completed appropiately in the first try, to then try again with that particular record (rec)
 def isBadRow(rec):
-    return(
+    return (
         rec.get("td_pred") == "other"
         and rec.get("cs_pred") == "other"
         and str(rec.get("td_rationale", "")).startswith(FAILED_RATIONALE_MESSAGE)
         and str(rec.get("cs_rationale", "")).startswith(FAILED_RATIONALE_MESSAGE)
     )
- 
-#Function that reads line by line of the written split file and if its done it adds it to its respective dictionary 
+
+#Function that reads line by line of the written split file and if its done it adds it to its respective dictionary
 def loadProgress(splitName):
     done = {}
     path = checkOutput(splitName)
@@ -230,41 +167,32 @@ def getCommentInfo(sourceId, comments_by_id):
         "comment_features": info.get("comment_features", [0.0] * config.COMMENT_FEATURE_DIM),
         "comment_count": info.get("comment_count", 0),
     }
- 
-#Main function that gets the rationales with their respective dataset depending on which split we are talking about 
-#(train, test, validate)
-#
-# SOCIAL BRANCH FIX: previously this function was defined but never called
-# from main() -- main() called processSplitTemp() instead, which never
-# touches the LLM or comments_by_id at all. It also used to call
-# makeRequest() twice per record (once with the digest, once without),
-# throwing away the digest-informed result and keeping the one generated
-# with no comment context -- so comments never influenced the rationale even
-# when this function *was* used. Both issues are fixed below: a single
-# makeRequest() call using the digest, and the resulting comment_features
-# vector is attached to the output record so it reaches train/val/test.json.
+
+#Original sequential version -- kept for reference / debugging a single
+#split without concurrency (e.g. to isolate whether an issue is rate-limit
+#related or something else). processSplitParallel below is what main() uses.
 def processSplit(splitName, jsonPath, comments_by_id):
     print(f"\n=== {splitName} ===")
     with open(jsonPath, "r", encoding="utf-8") as f:
-        records = json.load(f) #loads every record from the path
- 
+        records = json.load(f)
+
     done = loadProgress(splitName)
     print(f"{len(records)} total rows, {len(done)} already done (resuming)")
- 
+
     client = getClient()
     ckptPath = checkOutput(splitName)
     ckptFile = open(ckptPath, "a", encoding="utf-8")
- 
+
     for i, rec in enumerate(records):
         if rec["source_id"] in done:
             continue
- 
+
         commentInfo = getCommentInfo(rec["source_id"], comments_by_id)
         digest = comments_by_id.get(rec["source_id"], {}).get("comment_digest", "No comments available.")
 
         tdRationale, tdPred, csRationale, csPred = makeRequest(client, rec["content"], digest)
         time.sleep(config.RATIONALE_SLEEP_BETWEEN_CALLS)
- 
+
         recOut = dict(rec)
         recOut["td_rationale"] = tdRationale
         recOut["td_pred"] = tdPred
@@ -274,35 +202,103 @@ def processSplit(splitName, jsonPath, comments_by_id):
         recOut["cs_acc"] = int(csPred == rec["label"])
         recOut["comment_features"] = commentInfo["comment_features"]
         recOut["comment_count"] = commentInfo["comment_count"]
- 
+
         ckptFile.write(json.dumps(recOut, ensure_ascii=False) + "\n")
         ckptFile.flush()
         done[rec["source_id"]] = recOut
- 
+
         if (i + 1) % 50 == 0:
             print(f"{i + 1}/{len(records)} done")
- 
+
     ckptFile.close()
- 
+
     finalRecords = [done[r["source_id"]] for r in records]
     outPath = os.path.join(config.RATIONALES, f"{'val' if splitName == 'validate' else splitName}.json")
     with open(outPath, "w", encoding="utf-8") as f:
         json.dump(finalRecords, f, ensure_ascii=False, indent=2)
     print(f"wrote {outPath}")
 
+#Parallel runner used by main(). Concurrency is deliberately LOW
+#(config.RATIONALE_MAX_WORKERS, default 4) because Groq's free tier is rate
+#limited around row ~300 -- more workers just produces more simultaneous
+#429s, not more throughput. Each worker still goes through makeRequest's
+#existing retry/backoff, so correctness doesn't depend on the worker count,
+#only speed does. Checkpoint writes are serialized behind a lock so
+#concurrent workers can't corrupt the .jsonl file.
+def processSplitParallel(splitName, jsonPath, comments_by_id, maxWorkers=None):
+    if maxWorkers is None:
+        maxWorkers = getattr(config, "RATIONALE_MAX_WORKERS", 4)
+
+    print(f"\n=== {splitName} (parallel, {maxWorkers} workers) ===")
+    with open(jsonPath, "r", encoding="utf-8") as f:
+        records = json.load(f)
+
+    done = loadProgress(splitName)
+    todo = [rec for rec in records if rec["source_id"] not in done]
+    print(f"{len(records)} total rows, {len(done)} already done, {len(todo)} remaining")
+
+    if not todo:
+        finalRecords = [done[r["source_id"]] for r in records]
+        outPath = os.path.join(config.RATIONALES, f"{'val' if splitName == 'validate' else splitName}.json")
+        with open(outPath, "w", encoding="utf-8") as f:
+            json.dump(finalRecords, f, ensure_ascii=False, indent=2)
+        print(f"nothing left to do; wrote {outPath}")
+        return
+
+    client = getClient()
+    ckptPath = checkOutput(splitName)
+    writeLock = threading.Lock()
+
+    def worker(rec):
+        commentInfo = getCommentInfo(rec["source_id"], comments_by_id)
+        digest = comments_by_id.get(rec["source_id"], {}).get("comment_digest", "No comments available.")
+        tdRationale, tdPred, csRationale, csPred = makeRequest(client, rec["content"], digest)
+        time.sleep(config.RATIONALE_SLEEP_BETWEEN_CALLS)
+
+        recOut = dict(rec)
+        recOut["td_rationale"] = tdRationale
+        recOut["td_pred"] = tdPred
+        recOut["td_acc"] = int(tdPred == rec["label"])
+        recOut["cs_rationale"] = csRationale
+        recOut["cs_pred"] = csPred
+        recOut["cs_acc"] = int(csPred == rec["label"])
+        recOut["comment_features"] = commentInfo["comment_features"]
+        recOut["comment_count"] = commentInfo["comment_count"]
+        return recOut
+
+    with open(ckptPath, "a", encoding="utf-8") as ckptFile, ThreadPoolExecutor(max_workers=maxWorkers) as pool:
+        futures = {pool.submit(worker, rec): rec for rec in todo}
+        for i, future in enumerate(as_completed(futures)):
+            try:
+                recOut = future.result()
+            except Exception as e:
+                # worker() itself shouldn't normally raise (makeRequest already
+                # catches everything internally), but don't let one bad row
+                # kill the whole run if something unexpected slips through
+                print(f"[worker error, skipping row] {e}")
+                continue
+
+            with writeLock:
+                ckptFile.write(json.dumps(recOut, ensure_ascii=False) + "\n")
+                ckptFile.flush()
+            done[recOut["source_id"]] = recOut
+
+            if (i + 1) % 50 == 0:
+                print(f"{i + 1}/{len(todo)} done")
+
+    finalRecords = [done[r["source_id"]] for r in records]
+    outPath = os.path.join(config.RATIONALES, f"{'val' if splitName == 'validate' else splitName}.json")
+    with open(outPath, "w", encoding="utf-8") as f:
+        json.dump(finalRecords, f, ensure_ascii=False, indent=2)
+    print(f"wrote {outPath} ({len(finalRecords)} rows, {len(done)} completed total)")
+
 #Resume-only variant: writes out whatever has already been checkpointed
 #WITHOUT making any new LLM calls (useful if you've already paid for the
 #rationale generation pass and just want to rebuild train/val/test.json from
-#the checkpoint, e.g. after changing something downstream).
-#
-# SOCIAL BRANCH FIX: also attaches comment_features here, mirroring
-# processSplit, since older checkpoints written before this fix won't have
-# them yet -- otherwise records rebuilt purely from checkpoint would silently
-# fall back to a zero comment-feature vector even when real comment data
-# exists in comments_by_post.json.
+#the checkpoint, e.g. after changing something downstream, or if a run got
+#interrupted and you just want the partial results as-is).
 def processSplitTemp(splitName, jsonPath, comments_by_id):
     print(f"\n==={splitName}===")
-    #Load only the progress up until this point
     done = loadProgress(splitName)
     print(f"skipping LLM calls for now and using {len(done)}")
 
@@ -312,9 +308,8 @@ def processSplitTemp(splitName, jsonPath, comments_by_id):
             rec["comment_features"] = commentInfo["comment_features"]
             rec["comment_count"] = commentInfo["comment_count"]
 
-    #we put the done values inside a list to then put them in the final json
     finalRecords = list(done.values())
-    
+
     outPath = os.path.join(config.RATIONALES, f"{'val' if splitName == 'validate' else splitName}.json")
     with open(outPath, "w", encoding="utf-8") as f:
         json.dump(finalRecords, f, ensure_ascii=False, indent=2)
@@ -333,22 +328,17 @@ def main():
         )
     comments_by_id = {c["source_id"]: c for c in comments_list}
 
-    # SOCIAL BRANCH FIX: main() now calls the function that actually talks to
-    # the LLM and attaches comment_features (processSplit), instead of
-    # processSplitTemp, which used to run unconditionally here and never
-    # generated a rationale or touched comments_by_id at all.
-    processSplit("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
-    processSplit("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
-    processSplit("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
-    print("\nStep 2 complete. You can now run textTraining.py")
+    processSplitParallel("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
+    processSplitParallel("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
+    processSplitParallel("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
+    print("\nStep 2 complete. You can now run textTraining.py / progressiveFusionTraining.py")
 
-    # If you've already generated rationales in a previous run and just want
-    # to rebuild train/val/test.json from the existing checkpoints without
-    # spending new LLM calls, comment out the three processSplit(...) lines
-    # above and use this instead:
+    # If a run gets interrupted and you just want to rebuild train/val/test.json
+    # from whatever's already checkpointed, without spending new LLM calls,
+    # comment out the three processSplitParallel(...) lines above and use:
     # processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
     # processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
     # processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
- 
+
 if __name__ == "__main__":
     main()

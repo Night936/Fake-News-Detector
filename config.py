@@ -36,12 +36,27 @@ SECONDARY_TEXT = "title" #The non clean text in case the first one cant be found
 LABEL_SOURCE = "6_way_label" #The final dissemination on wether it is fake or not, since its 
                              #probabilistic it takes into account the 6 way label
 
-#LLM Config based on Groq free tier rate limits
-#LLM Config -- switched from Groq to DeepInfra (OpenAI-compatible endpoint)
-GROQ_MODEL = "openai/gpt-oss-120b"          #confirm exact string on DeepInfra's model page before running
-GROQ_BASE_URL = "https://api.deepinfra.com/v1/openai"
+# ---------------------------------------------------------------------------
+# LLM Config -- REVERTED to Groq for tonight's run (temporary/preliminary
+# results for the paper). DeepInfra requires account approval that hasn't
+# come through yet; Groq's free tier is available right now. Swapping back
+# to DeepInfra (or Claude) later is just re-pointing GROQ_MODEL/
+# GROQ_BASE_URL and getClient() in Preprocessing/rationaleGeneration.py --
+# nothing else in the pipeline needs to change.
+# ---------------------------------------------------------------------------
+GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 RATIONALE_MAX_RETRIES = 3
-RATIONALE_SLEEP_BETWEEN_CALLS = 0.05        #seconds -- can likely be lowered now that free-tier rate limiting is gone
+RATIONALE_SLEEP_BETWEEN_CALLS = 0.05  #seconds -- kept small; free-tier throttling is handled
+                                       #by the 429 retry-after backoff, not this fixed sleep
+
+# Concurrency for rationale generation (see processSplitParallel in
+# Preprocessing/rationaleGeneration.py). Kept LOW on purpose: Groq's free
+# tier is the actual bottleneck (rate limiting starts around row ~300), and
+# throwing more concurrent workers at a rate-limited free tier just produces
+# more 429s in parallel, not more throughput. Raise this back to ~40 once
+# the provider is a paid tier (DeepInfra) with real concurrent capacity.
+RATIONALE_MAX_WORKERS = 4
 
 #BERT Hyperparameters
 BERT_PATH = "bert-base-uncased"  
