@@ -328,17 +328,17 @@ def main():
         )
     comments_by_id = {c["source_id"]: c for c in comments_list}
 
-    processSplitParallel("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
-    processSplitParallel("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
-    processSplitParallel("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
+    #processSplitParallel("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
+    #processSplitParallel("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
+    #processSplitParallel("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
     print("\nStep 2 complete. You can now run textTraining.py / progressiveFusionTraining.py")
 
     # If a run gets interrupted and you just want to rebuild train/val/test.json
     # from whatever's already checkpointed, without spending new LLM calls,
     # comment out the three processSplitParallel(...) lines above and use:
-    # processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
-    # processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
-    # processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
+    processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
+    processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
+    processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
 
 if __name__ == "__main__":
     main()
