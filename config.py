@@ -56,7 +56,7 @@ RATIONALE_SLEEP_BETWEEN_CALLS = 0.05  #seconds -- kept small; free-tier throttli
 # throwing more concurrent workers at a rate-limited free tier just produces
 # more 429s in parallel, not more throughput. Raise this back to ~40 once
 # the provider is a paid tier (DeepInfra) with real concurrent capacity.
-RATIONALE_MAX_WORKERS = 4
+RATIONALE_MAX_WORKERS = 20
 
 #BERT Hyperparameters
 BERT_PATH = "bert-base-uncased"  
