@@ -95,6 +95,18 @@ def main():
                 f"and commentAggregation.py) before this script."
             )
 
+    # Class-imbalance correction: compute pos_weight = count(real) / count(fake)
+    # from the ACTUAL train.json label counts (not hardcoded), so this stays
+    # correct if the dataset composition changes (e.g. moving from mini to
+    # full dataset). See Models/progressiveFusion.py's Trainer.train() for
+    # how this is used in BCEWithLogitsLoss.
+    with open(cfg["train_meta"], "r", encoding="utf-8") as f:
+        train_records = json.load(f)
+    n_real = sum(1 for r in train_records if r.get("label") == "real")
+    n_fake = sum(1 for r in train_records if r.get("label") == "fake")
+    cfg["pos_weight"] = (n_real / n_fake) if n_fake > 0 else 1.0
+    print(f"train label balance: real={n_real}, fake={n_fake} -> pos_weight={cfg['pos_weight']:.4f}")
+
     print("config:", json.dumps({k: v for k, v in cfg.items() if k != "model"}, indent=2))
 
     trainer = Trainer(cfg)
