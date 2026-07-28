@@ -45,13 +45,13 @@ LABEL_SOURCE = "6_way_label" #The final dissemination on wether it is fake or no
 # nothing else in the pipeline needs to change.
 # ---------------------------------------------------------------------------
 GROQ_MODEL = "llama-3.3-70b-versatile"
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_BASE_URL = "https://api.deepinfra.com/v1/openai"
 RATIONALE_MAX_RETRIES = 3
 RATIONALE_SLEEP_BETWEEN_CALLS = 0.05  #seconds -- kept small; free-tier throttling is handled
                                        #by the 429 retry-after backoff, not this fixed sleep
 
 # Concurrency for rationale generation (see processSplitParallel in
-# Preprocessing/rationaleGeneration.py). Kept LOW on purpose: Groq's free
+# Preprocessing/rationaleGeneration.py). Kept LOW on purpose: Groq's fee
 # tier is the actual bottleneck (rate limiting starts around row ~300), and
 # throwing more concurrent workers at a rate-limited free tier just produces
 # more 429s in parallel, not more throughput. Raise this back to ~40 once
