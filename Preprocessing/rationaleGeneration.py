@@ -50,12 +50,9 @@ MESSAGE_TEMPLATE = (
 #again later; everything below (makeRequest, checkpointing, parallel runner)
 #is provider-agnostic.
 def getClient():
-    api_key = os.environ.get("GROQ_API")
-
+    api_key = os.environ.get("DEEPINFRA_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "Set the GROQ_API environment variable first "
-        )
+        raise RuntimeError("Set the DEEPINFRA_API_KEY environment variable first")
     return OpenAI(api_key=api_key, base_url=config.GROQ_BASE_URL)
 
 #Recieves the error message from the API request and gets how long it should wait before trying once more using REGEX
