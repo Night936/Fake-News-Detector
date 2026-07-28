@@ -44,7 +44,7 @@ LABEL_SOURCE = "6_way_label" #The final dissemination on wether it is fake or no
 # GROQ_BASE_URL and getClient() in Preprocessing/rationaleGeneration.py --
 # nothing else in the pipeline needs to change.
 # ---------------------------------------------------------------------------
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
 GROQ_BASE_URL = "https://api.deepinfra.com/v1/openai"
 RATIONALE_MAX_RETRIES = 3
 RATIONALE_SLEEP_BETWEEN_CALLS = 0.05  #seconds -- kept small; free-tier throttling is handled

@@ -50,9 +50,12 @@ MESSAGE_TEMPLATE = (
 #again later; everything below (makeRequest, checkpointing, parallel runner)
 #is provider-agnostic.
 def getClient():
-    api_key = os.environ.get("DEEPINFRA_API_KEY")
+    api_key = os.environ.get("GROQ_API")
+
     if not api_key:
-        raise RuntimeError("Set the DEEPINFRA_API_KEY environment variable first")
+        raise RuntimeError(
+            "Set the GROQ_API environment variable first "
+        )
     return OpenAI(api_key=api_key, base_url=config.GROQ_BASE_URL)
 
 #Recieves the error message from the API request and gets how long it should wait before trying once more using REGEX
@@ -234,6 +237,17 @@ def processSplitParallel(splitName, jsonPath, comments_by_id, maxWorkers=None):
     todo = [rec for rec in records if rec["source_id"] not in done]
     print(f"{len(records)} total rows, {len(done)} already done, {len(todo)} remaining")
 
+    # BUDGET SAFETY NET: cap how many NEW rows this run will process, per
+    # config.MAX_ROWS_PER_SPLIT (see config.py). Already-checkpointed rows
+    # in `done` are untouched either way -- this only limits new API spend.
+    row_caps = getattr(config, "MAX_ROWS_PER_SPLIT", None)
+    if row_caps is not None:
+        cap = row_caps.get(splitName)
+        if cap is not None and len(todo) > cap:
+            print(f"Capping this run to {cap} new rows (of {len(todo)} remaining) "
+                  f"per config.MAX_ROWS_PER_SPLIT['{splitName}'] -- re-run to continue further.")
+            todo = todo[:cap]
+
     if not todo:
         finalRecords = [done[r["source_id"]] for r in records]
         outPath = os.path.join(config.RATIONALES, f"{'val' if splitName == 'validate' else splitName}.json")
@@ -333,9 +347,9 @@ def main():
     # If a run gets interrupted and you just want to rebuild train/val/test.json
     # from whatever's already checkpointed, without spending new LLM calls,
     # comment out the three processSplitParallel(...) lines above and use:
-    #processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
-    #processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
-    #processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
+    # processSplitTemp("train", os.path.join(config.ARG_OUTPUT, "train_pre.json"), comments_by_id)
+    # processSplitTemp("validate", os.path.join(config.ARG_OUTPUT, "val_pre.json"), comments_by_id)
+    # processSplitTemp("test", os.path.join(config.ARG_OUTPUT, "test_pre.json"), comments_by_id)
 
 if __name__ == "__main__":
     main()
