@@ -12,6 +12,7 @@ from Preprocessing.imagePreprocessing import (
     getFrequencyTransform,
     getSpatialTransform,
     getDFT,
+    getFrequencyComponents,
 )
 
 LABELS = {"real": 0, "fake": 1}
@@ -87,11 +88,17 @@ def getImageDataloader(jsonPath, imageDir, batchSize, shuffle, train=True):
 
 class FakedditMultimodalDataset(Dataset):
     def __init__(self, jsonPath, imageDir, bertPath, maxLen,
-                 extra_feature_dim, train=True):
+                 extra_feature_dim, comment_feature_dim=8, train=True):
         raw = json.load(open(jsonPath, "r", encoding="utf-8"))
         self.tokenizer = BertTokenizer.from_pretrained(bertPath)
         self.maxLen = maxLen
         self.extra_feature_dim = extra_feature_dim
+        # This project's "social branch" -- comment_features (from
+        # Utils/commentFeatures.py) were previously only ever read by the
+        # text-only Utils/fakedditDataloader.py, never by this multimodal
+        # dataset, so the joint fusion model would have silently trained
+        # without comment signal. Now sized and defaulted like extra_features.
+        self.comment_feature_dim = comment_feature_dim
         self.imageDir = imageDir
         self.spatialTransform = getSpatialTransform(train=train)
         self.frequencyTransform = getFrequencyTransform(train=train)
@@ -126,13 +133,18 @@ class FakedditMultimodalDataset(Dataset):
     def _load_image_tensors(self, fakeddit_id):
         path = os.path.join(self.imageDir, fakeddit_id + ".jpg")
         try:
-            img         = Image.open(path).convert("RGB")
-            img_spatial = self.spatialTransform(img)
-            img_freq    = self.frequencyTransform(getDFT(img))
-            return img_spatial, img_freq, torch.tensor(1.0)
+            img              = Image.open(path).convert("RGB")
+            img_spatial      = self.spatialTransform(img)
+            img_freq         = self.frequencyTransform(getDFT(img))
+            # Real+imaginary DFT channels for the progressive fusion model's
+            # frequency branch (see Preprocessing/imagePreprocessing.py for
+            # why this is a separate tensor from img_freq above).
+            img_freq_complex = getFrequencyComponents(img)
+            return img_spatial, img_freq, img_freq_complex, torch.tensor(1.0)
         except Exception:
             return (torch.zeros(3, 224, 224),
                     torch.zeros(3, 224, 224),
+                    torch.zeros(6, 224, 224),
                     torch.tensor(0.0))
  
     def __len__(self):
@@ -149,35 +161,43 @@ class FakedditMultimodalDataset(Dataset):
             rec.get("extra_features", [0.0] * self.extra_feature_dim),
             dtype=torch.float,
         )
+        # Defaults to zeros for posts with no comment thread, exactly like
+        # extra_features already did.
+        comment = torch.tensor(
+            rec.get("comment_features", [0.0] * self.comment_feature_dim),
+            dtype=torch.float,
+        )
  
-        img_spatial, img_freq, has_image = self._load_image_tensors(rec["fakeddit_id"])
+        img_spatial, img_freq, img_freq_complex, has_image = self._load_image_tensors(rec["fakeddit_id"])
  
         return {
-            "content":        content,
-            "content_masks":  content_masks,
-            "FTR_2":          ftr2,
-            "FTR_2_masks":    ftr2_masks,
-            "FTR_2_pred":     torch.tensor(PREDICTED_VALS[rec["td_pred"]], dtype=torch.long),
-            "FTR_2_acc":      torch.tensor(rec["td_acc"],         dtype=torch.long),
-            "FTR_3":          ftr3,
-            "FTR_3_masks":    ftr3_masks,
-            "FTR_3_pred":     torch.tensor(PREDICTED_VALS[rec["cs_pred"]], dtype=torch.long),
-            "FTR_3_acc":      torch.tensor(rec["cs_acc"], dtype=torch.long),
-            "extra_features": extra,
-            "img_spatial":    img_spatial,
-            "img_freq":       img_freq,
-            "has_image":      has_image,
-            "label":          torch.tensor(LABELS[rec["label"]], dtype=torch.long),
-            "source_id":      torch.tensor(rec["source_id"], dtype=torch.long),
+            "content":          content,
+            "content_masks":    content_masks,
+            "FTR_2":            ftr2,
+            "FTR_2_masks":      ftr2_masks,
+            "FTR_2_pred":       torch.tensor(PREDICTED_VALS[rec["td_pred"]], dtype=torch.long),
+            "FTR_2_acc":        torch.tensor(rec["td_acc"],         dtype=torch.long),
+            "FTR_3":            ftr3,
+            "FTR_3_masks":      ftr3_masks,
+            "FTR_3_pred":       torch.tensor(PREDICTED_VALS[rec["cs_pred"]], dtype=torch.long),
+            "FTR_3_acc":        torch.tensor(rec["cs_acc"], dtype=torch.long),
+            "extra_features":   extra,
+            "comment_features": comment,
+            "img_spatial":      img_spatial,
+            "img_freq":         img_freq,
+            "img_freq_complex": img_freq_complex,
+            "has_image":        has_image,
+            "label":            torch.tensor(LABELS[rec["label"]], dtype=torch.long),
+            "source_id":        torch.tensor(rec["source_id"], dtype=torch.long),
         }
  
  
 def get_multimodal_dataloader(json_path, image_dir, bert_path,
-                               max_len, extra_feature_dim,
+                               max_len, extra_feature_dim, comment_feature_dim,
                                batch_size, shuffle, train=True):
     dataset = FakedditMultimodalDataset(
         json_path, image_dir, bert_path,
-        max_len, extra_feature_dim, train=train,
+        max_len, extra_feature_dim, comment_feature_dim, train=train,
     )
     return DataLoader(
         dataset,
@@ -187,4 +207,3 @@ def get_multimodal_dataloader(json_path, image_dir, bert_path,
         pin_memory=True,
         drop_last=train,
     )
- 
