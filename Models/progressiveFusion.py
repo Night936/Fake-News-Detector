@@ -227,7 +227,12 @@ class ProgressiveFusionModel(nn.Module):
         comment_embedding = self.comment_feature_mlp(kwargs["comment_features"])
         fused = torch.cat([state, extra_embedding, comment_embedding], dim=1)
         logit = self.classifier(fused).squeeze(1)
-        return {"classify_pred": torch.sigmoid(logit), "fused_feature": fused}
+        # NOTE: classify_pred is the sigmoid probability -- used everywhere
+        # for evaluation/prediction (evaluate(), predict()). The raw logit
+        # is also returned so Trainer.train() can use BCEWithLogitsLoss with
+        # pos_weight for class-imbalance correction (nn.BCELoss cannot take
+        # pos_weight since it operates on already-squashed probabilities).
+        return {"classify_pred": torch.sigmoid(logit), "logit": logit, "fused_feature": fused}
 
 
 class Trainer:
@@ -256,9 +261,31 @@ class Trainer:
         if cfg["use_cuda"]:
             self.model = self.model.cuda()
 
-        loss_fn = nn.BCELoss()
+        # Class-imbalance correction: your train split is real=1479/fake=2242
+        # (~40/60), and left uncorrected the model systematically favors
+        # predicting "fake" -- visible as a persistent gap between
+        # recall_real and recall_fake across every epoch. pos_weight up-
+        # weights the minority ("real") class's contribution to the loss.
+        # cfg["pos_weight"] is computed once in progressiveFusionTraining.py
+        # from the actual train.json label counts; falls back to 1.0 (no
+        # correction) if not provided, so this stays backward compatible.
+        pos_weight_value = cfg.get("pos_weight", 1.0)
+        pos_weight = torch.tensor([pos_weight_value])
+        if cfg["use_cuda"]:
+            pos_weight = pos_weight.cuda()
+        loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         optimizer = torch.optim.Adam(trainable_params, lr=cfg["lr"], weight_decay=cfg["weight_decay"])
+        # Validation metric oscillated noticeably epoch-to-epoch in the first
+        # real run (0.804 -> 0.785 -> 0.799 -> 0.828 -> ... -> 0.784 -> ...),
+        # consistent with the LR being a bit aggressive for how little of the
+        # model is actually trainable (frozen backbones + final BERT layer +
+        # fusion stages + MLPs). ReduceLROnPlateau backs off once the val
+        # metric stops improving, rather than using one flat LR throughout.
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="max", factor=0.5, patience=1,
+        )
         recorder = Recorder(cfg["early_stop"])
 
         train_loader = self._loader(cfg["train_meta"], True, True)
@@ -275,19 +302,25 @@ class Trainer:
                 label = batch["label"]
 
                 res = self.model(**batch)
-                loss = loss_fn(res["classify_pred"], label.float())
+                loss = loss_fn(res["logit"], label.float())
 
                 optimizer.zero_grad()
                 loss.backward()
+                # Gradient clipping: cheap, stabilizes training, no downside
+                # -- pairs with the LR scheduler above to reduce the epoch-
+                # to-epoch validation noise seen in the first run.
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
                 optimizer.step()
                 avg_loss.add(loss.item())
 
             print("----- validating -----")
             val_results = self.evaluate(val_loader)
             print("val:", val_results)
+            scheduler.step(val_results["metric"])
             mark = recorder.add(val_results)
             if logger:
-                logger.info(f"epoch {epoch} train_loss={avg_loss.item():.4f} val={val_results}")
+                logger.info(f"epoch {epoch} train_loss={avg_loss.item():.4f} val={val_results} "
+                             f"lr={optimizer.param_groups[0]['lr']:.2e}")
 
             if mark == "save":
                 torch.save(self.model.state_dict(), os.path.join(self.save_path, "parameter_pfn.pkl"))
