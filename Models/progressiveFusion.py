@@ -284,7 +284,7 @@ class Trainer:
         # fusion stages + MLPs). ReduceLROnPlateau backs off once the val
         # metric stops improving, rather than using one flat LR throughout.
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="max", factor=0.5, patience=1,
+            optimizer, mode="max", factor=0.5, patience=2,   # was patience=1
         )
         recorder = Recorder(cfg["early_stop"])
 
