@@ -81,7 +81,7 @@ RATIONALE_SLEEP_BETWEEN_CALLS = 0.05
 # DeepInfra is a paid tier with real concurrent capacity (unlike Groq's free
 # tier, which is TPM-capped around 12k tokens/min regardless of worker
 # count) -- safe to run meaningfully higher concurrency here.
-RATIONALE_MAX_WORKERS = 20
+RATIONALE_MAX_WORKERS = 80
 
 # ---------------------------------------------------------------------------
 # BUDGET SAFETY NET for rationale generation. At ~500 input / ~200 output
