@@ -108,9 +108,9 @@ RATIONALE_MAX_WORKERS = 80
 # rows is ~7x the mini dataset (a real scale-up test) while keeping a full
 # run inside a single session (~35 min/epoch at the same throughput).
 MAX_ROWS_PER_SPLIT = {
-    "train": 20000,
-    "validate": 2500,
-    "test": 2500,
+    "train": 8000,
+    "validate": 1000,
+    "test": 1000,
 }
 # Set to None (i.e. MAX_ROWS_PER_SPLIT = None) to disable the cap entirely
 # and process every remaining row in a split -- do this only once you're
